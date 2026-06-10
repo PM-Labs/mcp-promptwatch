@@ -1,5 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import https from 'https';
+import fs from 'fs';
+import { timingSafeEqual } from 'crypto';
 
 const app = express();
 app.use(express.json());
@@ -13,9 +15,33 @@ function loadClients(): Record<string, string> {
   const path =
     process.env.PROMPTWATCH_CLIENTS_FILE ||
     '/opt/pmin-mcpinfrastructure/env/promptwatch-clients.json';
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return JSON.parse(require('fs').readFileSync(path, 'utf-8'));
+  return JSON.parse(fs.readFileSync(path, 'utf-8'));
 }
+
+// Module-level cache for file-based clients (populated on first use or SIGHUP).
+// When PROMPTWATCH_CLIENTS_JSON is set (e.g. tests, container env), loadClients()
+// reads it directly from the env var and is cheap to call per-request.
+let _cachedClients: Record<string, string> | null = null;
+
+function getClients(): Record<string, string> {
+  if (process.env.PROMPTWATCH_CLIENTS_JSON) {
+    return loadClients(); // env-var path: always fresh, zero I/O
+  }
+  if (!_cachedClients) {
+    _cachedClients = loadClients();
+  }
+  return _cachedClients;
+}
+
+// Hot-reload on SIGHUP (e.g. after editing promptwatch-clients.json on droplet)
+process.on('SIGHUP', () => {
+  try {
+    _cachedClients = loadClients();
+    console.log('promptwatch-clients reloaded:', Object.keys(_cachedClients).join(', '));
+  } catch (err) {
+    console.error('Failed to reload clients:', err);
+  }
+});
 
 function _postUpstream(token: string, body: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -57,7 +83,13 @@ export const impl = {
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const token = process.env.MCP_AUTH_TOKEN;
   const header = req.headers.authorization;
-  if (!token || header !== `Bearer ${token}`) {
+  if (!token) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const expected = Buffer.from(`Bearer ${token}`);
+  const actual = Buffer.from(header ?? '');
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -73,7 +105,7 @@ app.post(
   authMiddleware,
   async (req: Request, res: Response): Promise<void> => {
     const body = req.body;
-    const clients = loadClients();
+    const clients = getClients();
     const clientEntries = Object.entries(clients);
 
     if (clientEntries.length === 0) {
