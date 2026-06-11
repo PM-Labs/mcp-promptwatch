@@ -63,7 +63,19 @@ function _postUpstream(token: string, body: unknown): Promise<unknown> {
       res.on('data', (chunk: string) => (data += chunk));
       res.on('end', () => {
         try {
-          resolve(JSON.parse(data));
+          // Upstream may return plain JSON or SSE (event: message\ndata: {...}\n\n)
+          const trimmed = data.trim();
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            resolve(JSON.parse(trimmed));
+          } else {
+            // Parse SSE: extract last `data:` line with a JSON payload
+            const dataLine = trimmed.split('\n').reverse().find(l => l.startsWith('data:'));
+            if (dataLine) {
+              resolve(JSON.parse(dataLine.slice(5).trim()));
+            } else {
+              reject(new Error(`Unexpected upstream response: ${trimmed.slice(0, 200)}`));
+            }
+          }
         } catch (e) {
           reject(e);
         }
