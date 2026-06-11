@@ -53,6 +53,7 @@ function _postUpstream(token: string, body: unknown): Promise<unknown> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
         Authorization: `Bearer ${token}`,
         'Content-Length': Buffer.byteLength(payload),
       },
