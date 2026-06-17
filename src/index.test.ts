@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { app, impl } from './index';
+import { app, impl, parseUpstreamBody } from './index';
 
 const CLIENTS = { injex: 'injex-key', pathfinder: 'pf-key' };
 
@@ -162,5 +162,69 @@ describe('tools/call routing', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     const [token] = spy.mock.calls[0] as [string, unknown];
     expect(token).toBe('injex-key');
+  });
+});
+
+// Regression coverage for the 2026-06-16 crash: the deep MCP healthcheck
+// probe sends `initialize` then `notifications/initialized` (a JSON-RPC
+// notification — no `id`, no response body expected). That request falls
+// through to the passthrough branch and upstream legitimately answers with
+// an empty body. The old parser treated any non-JSON, non-SSE body as an
+// error and rejected, which — awaited with no try/catch in the route
+// handler — became an unhandled promise rejection and crashed the whole
+// Node process (Node 20 default: --unhandled-rejections=throw).
+describe('parseUpstreamBody', () => {
+  it('treats an empty body as a valid no-content result, not an error', () => {
+    expect(parseUpstreamBody('')).toBeUndefined();
+    expect(parseUpstreamBody('   \n  ')).toBeUndefined();
+  });
+
+  it('still parses plain JSON bodies', () => {
+    expect(parseUpstreamBody('{"jsonrpc":"2.0","id":1,"result":{}}')).toEqual({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {},
+    });
+  });
+
+  it('still parses SSE-framed bodies', () => {
+    const sse = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n';
+    expect(parseUpstreamBody(sse)).toEqual({ jsonrpc: '2.0', id: 1, result: {} });
+  });
+
+  it('still rejects genuinely unparseable non-empty bodies', () => {
+    expect(() => parseUpstreamBody('<html>502 Bad Gateway</html>')).toThrow(
+      /Unexpected upstream response/,
+    );
+  });
+});
+
+describe('passthrough for notification-style methods (no id)', () => {
+  it('does not crash and responds when upstream returns an empty body', async () => {
+    mockUpstream(undefined);
+
+    const res = await request(app)
+      .post('/mcp')
+      .set(AUTH)
+      .send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    // The exact body doesn't matter — what matters is the process didn't
+    // crash and the request got a response at all.
+    expect(res.status).toBeLessThan(500);
+  });
+});
+
+describe('upstream error resilience', () => {
+  it('returns a JSON-RPC error response instead of crashing when postUpstream rejects', async () => {
+    jest.spyOn(impl, 'postUpstream').mockRejectedValue(new Error('Unexpected upstream response: '));
+
+    const res = await request(app)
+      .post('/mcp')
+      .set(AUTH)
+      .send({ jsonrpc: '2.0', id: 99, method: 'tools/list', params: {} });
+
+    expect(res.status).toBe(502);
+    expect(res.body).toHaveProperty('error');
+    expect(res.body.error.message).toMatch(/Unexpected upstream response/);
   });
 });
