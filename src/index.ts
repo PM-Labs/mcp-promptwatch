@@ -109,7 +109,7 @@ export const impl = {
 
 // Bearer guard middleware
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const token = process.env.MCP_AUTH_TOKEN;
+  const token = process.env.PROMPTWATCH_MCP_AUTH_TOKEN;
   const header = req.headers.authorization;
   if (!token) {
     res.status(401).json({ error: 'Unauthorized' });
@@ -246,7 +246,7 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
 }
 
 if (require.main === module) {
-  const PORT = process.env.PORT || 8080;
+  const PORT = process.env.PROMPTWATCH_PORT || 8080;
   app.listen(PORT, () => console.log(`mcp-promptwatch listening on :${PORT}`));
 }
 

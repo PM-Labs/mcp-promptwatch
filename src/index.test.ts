@@ -4,12 +4,12 @@ import { app, impl, parseUpstreamBody } from './index';
 const CLIENTS = { injex: 'injex-key', pathfinder: 'pf-key' };
 
 beforeEach(() => {
-  process.env.MCP_AUTH_TOKEN = 'test-token';
+  process.env.PROMPTWATCH_MCP_AUTH_TOKEN = 'test-token';
   process.env.PROMPTWATCH_CLIENTS_JSON = JSON.stringify(CLIENTS);
 });
 
 afterEach(() => {
-  delete process.env.MCP_AUTH_TOKEN;
+  delete process.env.PROMPTWATCH_MCP_AUTH_TOKEN;
   delete process.env.PROMPTWATCH_CLIENTS_JSON;
   jest.restoreAllMocks();
 });
